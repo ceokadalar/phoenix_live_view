@@ -255,13 +255,23 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   end
 
   ## handle_tag_open
-
+  # {:remote_component, ".component", [...], meta},
+  # ...
+  # {:close, :remote_component, name, ...}
   defp handle_tag_open(text, line, column, acc, state) do
     case handle_tag_name(text, column, []) do
       {:ok, name, new_column, rest} ->
         meta = %{line: line, column: column - 1, inner_location: nil}
-        acc = [{:tag_open, name, [], meta} | acc]
-        handle_maybe_tag_open_end(rest, line, new_column, acc, state)
+
+        case classify_tag_type(name) do
+          {:ok, type} ->
+            acc = [{type, name, [], meta} | acc]
+            handle_maybe_tag_open_end(rest, line, new_column, acc, state)
+
+          error ->
+            # TODO handle error
+            IO.inspect(error)
+        end
 
       :error ->
         message =
@@ -273,14 +283,32 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
     end
   end
 
+  defp classify_tag_type(":" <> _name), do: {:ok, :slot}
+  # defp classify_tag_type(name), do: {:ok, :remote_component} | {:error, "invalid tag ..."}
+  # defp classify_tag_type(name), do: {:ok, :local_component}
+  # defp classify_tag_type(name), do: {:ok, :tag}
+  defp classify_tag_type(_name), do: {:ok, :tag_open}
+
   ## handle_tag_close
 
   defp handle_tag_close(text, line, column, acc, state) do
     case handle_tag_name(text, column, []) do
       {:ok, name, new_column, ">" <> rest} ->
         meta = %{line: line, column: column - 2, inner_location: {line, column - 2}}
-        acc = [{:tag_close, name, meta} | acc]
-        handle_text(rest, line, new_column + 1, [], acc, state)
+
+        case classify_tag_type(name) do
+          # TODO: remove me
+          {:ok, :slot} ->
+            acc = [{:close, :slot, name, meta} | acc]
+            handle_text(rest, line, new_column + 1, [], acc, state)
+
+          {:ok, _type} ->
+            acc = [{:tag_close, name, meta} | acc]
+            handle_text(rest, line, new_column + 1, [], acc, state)
+
+          _error ->
+            :ok
+        end
 
       {:ok, _, new_column, _} ->
         message = "expected closing `>`"
@@ -634,25 +662,25 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   defp get_context([]), do: nil
   defp get_context(context), do: Enum.reverse(context)
 
-  defp put_attr([{:tag_open, name, attrs, meta} | acc], attr, attr_meta, value \\ nil) do
+  defp put_attr([{type, name, attrs, meta} | acc], attr, attr_meta, value \\ nil) do
     attrs = [{attr, value, attr_meta} | attrs]
-    [{:tag_open, name, attrs, meta} | acc]
+    [{type, name, attrs, meta} | acc]
   end
 
-  defp put_attr_value([{:tag_open, name, [{attr, _value, attr_meta} | attrs], meta} | acc], value) do
+  defp put_attr_value([{type, name, [{attr, _value, attr_meta} | attrs], meta} | acc], value) do
     attrs = [{attr, value, attr_meta} | attrs]
-    [{:tag_open, name, attrs, meta} | acc]
+    [{type, name, attrs, meta} | acc]
   end
 
-  defp reverse_attrs([{:tag_open, name, attrs, meta} | acc], line, column) do
+  defp reverse_attrs([{type, name, attrs, meta} | acc], line, column) do
     attrs = Enum.reverse(attrs)
     meta = %{meta | inner_location: {line, column}}
-    [{:tag_open, name, attrs, meta} | acc]
+    [{type, name, attrs, meta} | acc]
   end
 
-  defp put_self_close([{:tag_open, name, attrs, meta} | acc]) do
+  defp put_self_close([{type, name, attrs, meta} | acc]) do
     meta = Map.put(meta, :self_close, true)
-    [{:tag_open, name, attrs, meta} | acc]
+    [{type, name, attrs, meta} | acc]
   end
 
   defp push_brace(state, pos) do

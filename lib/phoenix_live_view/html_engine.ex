@@ -295,7 +295,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   defp validate_slot!(state, slot_name, meta) do
     message =
-      "invalid slot entry <:#{slot_name}>. A slot entry must be a direct child of a component"
+      "invalid slot entry <#{slot_name}>. A slot entry must be a direct child of a component"
 
     raise_syntax_error!(message, meta, state)
   end
@@ -348,6 +348,14 @@ defmodule Phoenix.LiveView.HTMLEngine do
     else
       _ -> %{state | tags: [token | state.tags]}
     end
+  end
+
+  # TODO: remove me!
+  defp pop_tag!(
+         %{tags: [{:slot, tag_name, _attrs, _meta} = tag | tags]} = state,
+         {:close, :slot, tag_name, _}
+       ) do
+    {tag, %{state | tags: tags}}
   end
 
   defp pop_tag!(
@@ -539,7 +547,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Slot
 
-  defp handle_token({:tag_open, ":inner_block", _attrs, meta}, state) do
+  defp handle_token({:slot, ":inner_block", _attrs, meta}, state) do
     message = "the slot name :inner_block is reserved"
     raise_syntax_error!(message, meta, state)
   end
@@ -547,9 +555,10 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Slot (self close)
 
   defp handle_token(
-         {:tag_open, ":" <> slot_name = tag_name, attrs, %{self_close: true} = tag_meta},
+         {:slot, ":" <> slot_name = tag_name, attrs, %{self_close: true} = tag_meta},
          state
        ) do
+    # TODO: move to tokenizer
     validate_slot!(state, slot_name, tag_meta)
     attrs = remove_phx_no_break(attrs)
     %{line: line} = tag_meta
@@ -569,7 +578,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Slot (with inner content)
 
-  defp handle_token({:tag_open, ":" <> slot_name, _attrs, tag_meta} = token, state) do
+  defp handle_token({:slot, slot_name, _attrs, tag_meta} = token, state) do
+    # TODO: move to tokenizer?
     validate_slot!(state, slot_name, tag_meta)
 
     state
@@ -578,8 +588,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
     |> update_subengine(:handle_begin, [])
   end
 
-  defp handle_token({:tag_close, ":" <> slot_name = tag_name, _tag_close_meta} = token, state) do
-    {{:tag_open, _name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
+  defp handle_token({:close, :slot, ":" <> slot_name = tag_name, _tag_close_meta} = token, state) do
+    {{:slot, _name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
     attrs = remove_phx_no_break(attrs)
     slot_name = String.to_atom(slot_name)
 
@@ -1312,7 +1322,9 @@ defmodule Phoenix.LiveView.HTMLEngine do
     if value in ~w(ignore stream append prepend replace) do
       validate_phx_attrs!(t, meta, state, "phx-update", id?)
     else
-      message = "the value of the attribute \"phx-update\" must be: ignore, stream, append, prepend, or replace"
+      message =
+        "the value of the attribute \"phx-update\" must be: ignore, stream, append, prepend, or replace"
+
       raise_syntax_error!(message, attr_meta, state)
     end
   end

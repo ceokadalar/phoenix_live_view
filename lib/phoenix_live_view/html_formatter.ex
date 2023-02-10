@@ -464,18 +464,51 @@ defmodule Phoenix.LiveView.HTMLFormatter do
     to_tree(tokens, [{:eex_comment, text} | buffer], stack, source)
   end
 
-  defp to_tree([{:tag_open, name, attrs, %{self_close: true}} | tokens], buffer, stack, source) do
+  defp to_tree([{type, name, attrs, %{self_close: true}} | tokens], buffer, stack, source)
+       when type in [:slot, :tag_open] do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
   @void_tags ~w(area base br col hr img input link meta param command keygen source)
-  defp to_tree([{:tag_open, name, attrs, _meta} | tokens], buffer, stack, source)
-       when name in @void_tags do
+  defp to_tree([{type, name, attrs, _meta} | tokens], buffer, stack, source)
+       when type in [:slot, :tag_open] and name in @void_tags do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
-  defp to_tree([{:tag_open, name, attrs, meta} | tokens], buffer, stack, source) do
+  defp to_tree([{type, name, attrs, meta} | tokens], buffer, stack, source)
+       when type in [:slot, :tag_open] do
     to_tree(tokens, [], [{name, attrs, meta, buffer} | stack], source)
+  end
+
+  # TODO: remove me!
+  defp to_tree(
+         [{:close, type, name, close_meta} | tokens],
+         buffer,
+         [{name, attrs, open_meta, upper_buffer} | stack],
+         source
+       )
+       when type in [:slot] do
+    {mode, block} =
+      if (name in ["pre", "textarea"] or contains_special_attrs?(attrs)) and buffer != [] do
+        content = content_from_source(source, open_meta.inner_location, close_meta.inner_location)
+        {:preserve, [{:text, content, %{newlines: 0}}]}
+      else
+        mode =
+          cond do
+            preserve_format?(name, upper_buffer) -> :preserve
+            name in @inline_elements -> :inline
+            true -> :block
+          end
+
+        {mode,
+         buffer
+         |> Enum.reverse()
+         |> may_set_preserve_on_text(mode, name)}
+      end
+
+    tag_block = {:tag_block, name, attrs, block, %{mode: mode}}
+
+    to_tree(tokens, [tag_block | upper_buffer], stack, source)
   end
 
   defp to_tree(
