@@ -343,7 +343,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   defp push_tag(state, token) do
     # If we have a void tag, we don't actually push it into the stack.
-    with {:tag_open, name, _attrs, _meta} <- token,
+    with {:tag, name, _attrs, _meta} <- token,
          true <- void?(name) do
       state
     else
@@ -351,20 +351,17 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  # TODO: refactor me!
   defp pop_tag!(
          %{tags: [{type, tag_name, _attrs, _meta} = tag | tags]} = state,
          {:close, type, tag_name, _}
-       )
-       when type in [:slot, :remote_component, :local_component] do
+       ) do
     {tag, %{state | tags: tags}}
   end
 
   defp pop_tag!(
          %{tags: [{type, tag_open_name, _attrs, tag_open_meta} | _]} = state,
-         {:close, _type, tag_close_name, tag_close_meta}
-       )
-       when type in [:slot, :remote_component, :tag_open] do
+         {:close, type, tag_close_name, tag_close_meta}
+       ) do
     message = """
     unmatched closing tag. Expected </#{tag_open_name}> for <#{tag_open_name}> \
     at line #{tag_open_meta.line}, got: </#{tag_close_name}>\
@@ -374,32 +371,6 @@ defmodule Phoenix.LiveView.HTMLEngine do
   end
 
   defp pop_tag!(state, {:close, _type, tag_name, tag_meta}) do
-    message = "missing opening tag for </#{tag_name}>"
-
-    raise_syntax_error!(message, tag_meta, state)
-  end
-
-  # TODO: old! remove me!
-  defp pop_tag!(
-         %{tags: [{:tag_open, tag_name, _attrs, _meta} = tag | tags]} = state,
-         {:tag_close, tag_name, _}
-       ) do
-    {tag, %{state | tags: tags}}
-  end
-
-  defp pop_tag!(
-         %{tags: [{:tag_open, tag_open_name, _attrs, tag_open_meta} | _]} = state,
-         {:tag_close, tag_close_name, tag_close_meta}
-       ) do
-    message = """
-    unmatched closing tag. Expected </#{tag_open_name}> for <#{tag_open_name}> \
-    at line #{tag_open_meta.line}, got: </#{tag_close_name}>\
-    """
-
-    raise_syntax_error!(message, tag_close_meta, state)
-  end
-
-  defp pop_tag!(state, {:tag_close, tag_name, tag_meta}) do
     message = "missing opening tag for </#{tag_name}>"
 
     raise_syntax_error!(message, tag_meta, state)
@@ -678,7 +649,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # HTML element (self close)
 
-  defp handle_token({:tag_open, name, attrs, %{self_close: true} = tag_meta}, state) do
+  defp handle_token({:tag, name, attrs, %{self_close: true} = tag_meta}, state) do
     suffix = if void?(name), do: ">", else: "></#{name}>"
     attrs = remove_phx_no_break(attrs)
     validate_phx_attrs!(attrs, tag_meta, state)
@@ -701,7 +672,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # HTML element
 
-  defp handle_token({:tag_open, name, attrs, tag_meta} = token, state) do
+  defp handle_token({:tag, name, attrs, tag_meta} = token, state) do
     validate_phx_attrs!(attrs, tag_meta, state)
     attrs = remove_phx_no_break(attrs)
 
@@ -717,13 +688,13 @@ defmodule Phoenix.LiveView.HTMLEngine do
         |> push_substate_to_stack()
         |> update_subengine(:handle_begin, [])
         |> set_root_on_not_tag()
-        |> push_tag({:tag_open, name, new_attrs, new_meta})
+        |> push_tag({:tag, name, new_attrs, new_meta})
         |> handle_tag_and_attrs(name, new_attrs, ">", to_location(new_meta))
     end
   end
 
-  defp handle_token({:tag_close, name, tag_meta} = token, state) do
-    {{:tag_open, _name, _attrs, tag_open_meta}, state} = pop_tag!(state, token)
+  defp handle_token({:close, :tag, name, tag_meta} = token, state) do
+    {{:tag, _name, _attrs, tag_open_meta}, state} = pop_tag!(state, token)
 
     state
     |> update_subengine(:handle_text, [to_location(tag_meta), "</#{name}>"])

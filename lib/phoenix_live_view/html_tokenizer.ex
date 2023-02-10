@@ -79,9 +79,9 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
       iex> alias Phoenix.LiveView.HTMLTokenizer
       iex> HTMLTokenizer.tokenize("<section><div/></section>", "nofile", 0, [line: 1, column: 1], [], :text)
       {[
-         {:tag_close, "section", %{column: 16, line: 1}},
-         {:tag_open, "div", [], %{column: 10, line: 1, self_close: true}},
-         {:tag_open, "section", [], %{column: 1, line: 1}}
+         {:close, :tag, "section", %{column: 16, line: 1}},
+         {:tag, "div", [], %{column: 10, line: 1, self_close: true}},
+         {:tag, "section", [], %{column: 1, line: 1}}
        ], :text}
 
   """
@@ -169,7 +169,7 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
 
   defp handle_script("</script>" <> rest, line, column, buffer, acc, state) do
     acc = [
-      {:tag_close, "script", %{line: line, column: column, inner_location: {line, column}}}
+      {:close, :tag, "script", %{line: line, column: column, inner_location: {line, column}}}
       | text_to_acc(buffer, acc, line, column, [])
     ]
 
@@ -196,7 +196,7 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
 
   defp handle_style("</style>" <> rest, line, column, buffer, acc, state) do
     acc = [
-      {:tag_close, "style", %{line: line, column: column, inner_location: {line, column}}}
+      {:close, :tag, "style", %{line: line, column: column, inner_location: {line, column}}}
       | text_to_acc(buffer, acc, line, column, [])
     ]
 
@@ -291,13 +291,8 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
         meta = %{line: line, column: column - 2, inner_location: {line, column - 2}}
 
         case classify_tag_type(name) do
-          # TODO: remove me
-          {:ok, type} when type in [:slot, :remote_component, :local_component] ->
+          {:ok, type} ->
             acc = [{:close, type, name, meta} | acc]
-            handle_text(rest, line, new_column + 1, [], acc, state)
-
-          {:ok, _type} ->
-            acc = [{:tag_close, name, meta} | acc]
             handle_text(rest, line, new_column + 1, [], acc, state)
 
           _error ->
@@ -325,8 +320,8 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   # local component
   defp classify_tag_type("." <> _name), do: {:ok, :local_component}
 
-  # defp classify_tag_type(name), do: {:ok, :tag}
-  defp classify_tag_type(_name), do: {:ok, :tag_open}
+  # regular tags
+  defp classify_tag_type(_name), do: {:ok, :tag}
 
   ## handle_tag_name
 
@@ -373,10 +368,10 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
 
   defp handle_maybe_tag_open_end(">" <> rest, line, column, acc, state) do
     case reverse_attrs(acc, line, column + 1) do
-      [{:tag_open, "script", _, _} | _] = acc ->
+      [{:tag, "script", _, _} | _] = acc ->
         handle_script(rest, line, column + 1, [], acc, state)
 
-      [{:tag_open, "style", _, _} | _] = acc ->
+      [{:tag, "style", _, _} | _] = acc ->
         handle_style(rest, line, column + 1, [], acc, state)
 
       acc ->
