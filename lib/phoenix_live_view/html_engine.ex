@@ -288,7 +288,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
     %{state | slots: [[slot | slots] | other_slots], previous_token_slot?: true}
   end
 
-  defp validate_slot!(%{tags: [{:tag_open, <<first, _::binary>>, _, _} | _]}, _name, _tag_meta)
+  # defp validate_slot!(%{tags: [{type, _, _, _} | _]}, _name, _tag_meta) when type in [:remote_component, :local_component]
+  defp validate_slot!(%{tags: [{_type, <<first, _::binary>>, _, _} | _]}, _name, _tag_meta)
        when first in ?A..?Z or first == ?. do
     :ok
   end
@@ -350,14 +351,35 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  # TODO: remove me!
+  # TODO: refactor me!
   defp pop_tag!(
-         %{tags: [{:slot, tag_name, _attrs, _meta} = tag | tags]} = state,
-         {:close, :slot, tag_name, _}
-       ) do
+         %{tags: [{type, tag_name, _attrs, _meta} = tag | tags]} = state,
+         {:close, type, tag_name, _}
+       )
+       when type in [:slot, :remote_component, :tag_open] do
     {tag, %{state | tags: tags}}
   end
 
+  defp pop_tag!(
+         %{tags: [{type, tag_open_name, _attrs, tag_open_meta} | _]} = state,
+         {:close, _type, tag_close_name, tag_close_meta}
+       )
+       when type in [:slot, :remote_component, :tag_open] do
+    message = """
+    unmatched closing tag. Expected </#{tag_open_name}> for <#{tag_open_name}> \
+    at line #{tag_open_meta.line}, got: </#{tag_close_name}>\
+    """
+
+    raise_syntax_error!(message, tag_close_meta, state)
+  end
+
+  defp pop_tag!(state, {:close, _type, tag_name, tag_meta}) do
+    message = "missing opening tag for </#{tag_name}>"
+
+    raise_syntax_error!(message, tag_meta, state)
+  end
+
+  # TODO: old! remove me!
   defp pop_tag!(
          %{tags: [{:tag_open, tag_name, _attrs, _meta} = tag | tags]} = state,
          {:tag_close, tag_name, _}
@@ -410,11 +432,9 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Remote function component (self close)
 
   defp handle_token(
-         {:tag_open, <<first, _::binary>> = tag_name, attrs,
-          %{self_close: true, line: line} = tag_meta},
+         {:remote_component, tag_name, attrs, %{self_close: true, line: line} = tag_meta},
          state
-       )
-       when first in ?A..?Z do
+       ) do
     attrs = remove_phx_no_break(attrs)
     {mod_ast, fun} = decompose_remote_component_tag!(tag_name, tag_meta, state)
 
@@ -451,8 +471,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Remote function component (with inner content)
 
-  defp handle_token({:tag_open, <<first, _::binary>> = tag_name, attrs, tag_meta}, state)
-       when first in ?A..?Z do
+  defp handle_token({:remote_component, tag_name, attrs, tag_meta}, state) do
     mod_fun = decompose_remote_component_tag!(tag_name, tag_meta, state)
     tag_meta = Map.put(tag_meta, :mod_fun, mod_fun)
 
@@ -460,7 +479,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
       {^tag_meta, _attrs} ->
         state
         |> set_root_on_not_tag()
-        |> push_tag({:tag_open, tag_name, attrs, tag_meta})
+        |> push_tag({:remote_component, tag_name, attrs, tag_meta})
         |> init_slots()
         |> push_substate_to_stack()
         |> update_subengine(:handle_begin, [])
@@ -468,7 +487,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
       {new_meta, new_attrs} ->
         state
         |> set_root_on_not_tag()
-        |> push_tag({:tag_open, tag_name, new_attrs, new_meta})
+        |> push_tag({:remote_component, tag_name, new_attrs, new_meta})
         |> init_slots()
         |> push_substate_to_stack()
         |> update_subengine(:handle_begin, [])
@@ -477,9 +496,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  defp handle_token({:tag_close, <<first, _::binary>>, _tag_close_meta} = token, state)
-       when first in ?A..?Z do
-    {{:tag_open, name, attrs, %{mod_fun: {mod_ast, fun}, line: line} = tag_meta}, state} =
+  defp handle_token({:close, :remote_component, _name, _tag_close_meta} = token, state) do
+    {{:remote_component, name, attrs, %{mod_fun: {mod_ast, fun}, line: line} = tag_meta}, state} =
       pop_tag!(state, token)
 
     mod = Macro.expand(mod_ast, state.caller)
@@ -558,7 +576,6 @@ defmodule Phoenix.LiveView.HTMLEngine do
          {:slot, ":" <> slot_name = tag_name, attrs, %{self_close: true} = tag_meta},
          state
        ) do
-    # TODO: move to tokenizer
     validate_slot!(state, slot_name, tag_meta)
     attrs = remove_phx_no_break(attrs)
     %{line: line} = tag_meta
@@ -579,7 +596,6 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Slot (with inner content)
 
   defp handle_token({:slot, slot_name, _attrs, tag_meta} = token, state) do
-    # TODO: move to tokenizer?
     validate_slot!(state, slot_name, tag_meta)
 
     state

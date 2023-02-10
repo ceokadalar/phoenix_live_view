@@ -464,19 +464,22 @@ defmodule Phoenix.LiveView.HTMLFormatter do
     to_tree(tokens, [{:eex_comment, text} | buffer], stack, source)
   end
 
+  # TODO: fix me
   defp to_tree([{type, name, attrs, %{self_close: true}} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open] do
+       when type in [:slot, :tag_open, :remote_component] do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
+  # TODO: fix me
   @void_tags ~w(area base br col hr img input link meta param command keygen source)
   defp to_tree([{type, name, attrs, _meta} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open] and name in @void_tags do
+       when type in [:slot, :tag_open, :remote_component] and name in @void_tags do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
+  # TODO: fix me
   defp to_tree([{type, name, attrs, meta} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open] do
+       when type in [:slot, :tag_open, :remote_component] do
     to_tree(tokens, [], [{name, attrs, meta, buffer} | stack], source)
   end
 
