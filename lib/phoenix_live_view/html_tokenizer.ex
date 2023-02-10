@@ -255,9 +255,7 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   end
 
   ## handle_tag_open
-  # {:remote_component, ".component", [...], meta},
-  # ...
-  # {:close, :remote_component, name, ...}
+
   defp handle_tag_open(text, line, column, acc, state) do
     case handle_tag_name(text, column, []) do
       {:ok, name, new_column, rest} ->
@@ -268,9 +266,8 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
             acc = [{type, name, [], meta} | acc]
             handle_maybe_tag_open_end(rest, line, new_column, acc, state)
 
-          error ->
-            # TODO handle error
-            IO.inspect(error)
+          {:error, message} ->
+            raise_syntax_error!(message, meta, state)
         end
 
       :error ->
@@ -295,8 +292,8 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
             acc = [{:close, type, name, meta} | acc]
             handle_text(rest, line, new_column + 1, [], acc, state)
 
-          _error ->
-            :ok
+          {:error, message} ->
+            raise_syntax_error!(message, meta, state)
         end
 
       {:ok, _, new_column, _} ->
@@ -311,16 +308,10 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
     end
   end
 
-  # slot
   defp classify_tag_type(":" <> _name), do: {:ok, :slot}
-
-  # remote_component
+  defp classify_tag_type(":inner_block"), do: {:error, "the slot name :inner_block is reserved"}
   defp classify_tag_type(<<first, _::binary>>) when first in ?A..?Z, do: {:ok, :remote_component}
-
-  # local component
   defp classify_tag_type("." <> _name), do: {:ok, :local_component}
-
-  # regular tags
   defp classify_tag_type(_name), do: {:ok, :tag}
 
   ## handle_tag_name
