@@ -192,7 +192,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
   end
 
   defp validate_unclosed_tags!(%{tags: [tag | _]} = state, context) do
-    {:tag_open, name, _attrs, meta} = tag
+    {_type, name, _attrs, meta} = tag
     message = "end of #{context} reached without closing tag for <#{name}>"
 
     raise_syntax_error!(message, meta, state)
@@ -356,7 +356,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
          %{tags: [{type, tag_name, _attrs, _meta} = tag | tags]} = state,
          {:close, type, tag_name, _}
        )
-       when type in [:slot, :remote_component, :tag_open] do
+       when type in [:slot, :remote_component, :local_component] do
     {tag, %{state | tags: tags}}
   end
 
@@ -527,14 +527,13 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Local function component (self close)
 
   defp handle_token(
-         {:tag_open, "." <> name = tag_name, attrs, %{self_close: true, line: line} = tag_meta},
+         {:local_component, "." <> name = tag_name, attrs,
+          %{self_close: true, line: line} = tag_meta},
          state
        ) do
     attrs = remove_phx_no_break(attrs)
     fun = String.to_atom(name)
-
     {assigns, attr_info} = build_self_close_component_assigns(tag_name, attrs, line, state)
-
     mod = actual_component_module(state.caller, fun)
     store_component_call({mod, fun}, attr_info, [], line, state)
 
@@ -628,7 +627,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Local function component (with inner content)
 
-  defp handle_token({:tag_open, "." <> _ = name, attrs, tag_meta} = token, state) do
+  defp handle_token({:local_component, "." <> _ = name, attrs, tag_meta} = token, state) do
     case pop_special_attrs!(attrs, tag_meta, state) do
       {^tag_meta, _attrs} ->
         state
@@ -641,7 +640,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
       {new_meta, new_attrs} ->
         state
         |> set_root_on_not_tag()
-        |> push_tag({:tag_open, name, new_attrs, new_meta})
+        |> push_tag({:local_component, name, new_attrs, new_meta})
         |> init_slots()
         |> push_substate_to_stack()
         |> update_subengine(:handle_begin, [])
@@ -650,8 +649,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  defp handle_token({:tag_close, "." <> fun_name, _tag_close_meta} = token, state) do
-    {{:tag_open, name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
+  defp handle_token({:close, :local_component, "." <> fun_name, _tag_close_meta} = token, state) do
+    {{:local_component, name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
     attrs = remove_phx_no_break(attrs)
     fun = String.to_atom(fun_name)
     mod = actual_component_module(state.caller, fun)

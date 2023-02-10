@@ -283,18 +283,6 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
     end
   end
 
-  # slot
-  defp classify_tag_type(":" <> _name), do: {:ok, :slot}
-
-  # remote_component
-  defp classify_tag_type(<<first, _::binary>> = name) when first in ?A..?Z do
-    {:ok, :remote_component}
-  end
-
-  # defp classify_tag_type(name), do: {:ok, :local_component}
-  # defp classify_tag_type(name), do: {:ok, :tag}
-  defp classify_tag_type(_name), do: {:ok, :tag_open}
-
   ## handle_tag_close
 
   defp handle_tag_close(text, line, column, acc, state) do
@@ -304,7 +292,7 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
 
         case classify_tag_type(name) do
           # TODO: remove me
-          {:ok, type} when type in [:slot, :remote_component] ->
+          {:ok, type} when type in [:slot, :remote_component, :local_component] ->
             acc = [{:close, type, name, meta} | acc]
             handle_text(rest, line, new_column + 1, [], acc, state)
 
@@ -327,6 +315,18 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
         raise_syntax_error!(message, meta, state)
     end
   end
+
+  # slot
+  defp classify_tag_type(":" <> _name), do: {:ok, :slot}
+
+  # remote_component
+  defp classify_tag_type(<<first, _::binary>>) when first in ?A..?Z, do: {:ok, :remote_component}
+
+  # local component
+  defp classify_tag_type("." <> _name), do: {:ok, :local_component}
+
+  # defp classify_tag_type(name), do: {:ok, :tag}
+  defp classify_tag_type(_name), do: {:ok, :tag_open}
 
   ## handle_tag_name
 

@@ -466,20 +466,21 @@ defmodule Phoenix.LiveView.HTMLFormatter do
 
   # TODO: fix me
   defp to_tree([{type, name, attrs, %{self_close: true}} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open, :remote_component] do
+       when type in [:slot, :tag_open, :remote_component, :local_component, :tag] do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
   # TODO: fix me
   @void_tags ~w(area base br col hr img input link meta param command keygen source)
   defp to_tree([{type, name, attrs, _meta} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open, :remote_component] and name in @void_tags do
+       when type in [:slot, :tag_open, :remote_component, :local_component, :tag] and
+              name in @void_tags do
     to_tree(tokens, [{:tag_self_close, name, attrs} | buffer], stack, source)
   end
 
   # TODO: fix me
   defp to_tree([{type, name, attrs, meta} | tokens], buffer, stack, source)
-       when type in [:slot, :tag_open, :remote_component] do
+       when type in [:slot, :tag_open, :remote_component, :local_component, :tag] do
     to_tree(tokens, [], [{name, attrs, meta, buffer} | stack], source)
   end
 
@@ -490,7 +491,7 @@ defmodule Phoenix.LiveView.HTMLFormatter do
          [{name, attrs, open_meta, upper_buffer} | stack],
          source
        )
-       when type in [:slot] do
+       when type in [:slot, :local_component, :remote_component, :tag] do
     {mode, block} =
       if (name in ["pre", "textarea"] or contains_special_attrs?(attrs)) and buffer != [] do
         content = content_from_source(source, open_meta.inner_location, close_meta.inner_location)
