@@ -1136,11 +1136,31 @@ defmodule Phoenix.Component do
           |> assign_new(:foo, fn -> "foo" end)
           |> assign_new(:bar, fn %{foo: foo} -> foo <> "bar" end)
   '''
-  def assign_new(socket_or_assigns, key, fun)
-
-  def assign_new(%Socket{} = socket, key, fun) when is_function(fun, 1) do
+  def assign_new(%Socket{} = socket, key, fun) do
     validate_assign_key!(key)
+    do_assign_new(socket, key, fun)
+  end
 
+  def assign_new(%{__changed__: changed} = assigns, key, fun) when is_function(fun, 1) do
+    case assigns do
+      %{^key => _} -> assigns
+      %{} -> Phoenix.LiveView.Utils.force_assign(assigns, changed, key, fun.(assigns))
+    end
+  end
+
+  def assign_new(%{__changed__: changed} = assigns, key, fun) when is_function(fun, 0) do
+    case assigns do
+      %{^key => _} -> assigns
+      %{} -> Phoenix.LiveView.Utils.force_assign(assigns, changed, key, fun.())
+    end
+  end
+
+  def assign_new(assigns, _key, fun) when is_function(fun, 0) or is_function(fun, 1) do
+    raise_bad_socket_or_assign!("assign_new/3", assigns)
+  end
+
+  @doc false
+  def do_assign_new(%Socket{} = socket, key, fun) when is_function(fun, 1) do
     case socket do
       %{assigns: %{^key => _}} ->
         socket
@@ -1164,9 +1184,7 @@ defmodule Phoenix.Component do
     end
   end
 
-  def assign_new(%Socket{} = socket, key, fun) when is_function(fun, 0) do
-    validate_assign_key!(key)
-
+  def do_assign_new(%Socket{} = socket, key, fun) when is_function(fun, 0) do
     case socket do
       %{assigns: %{^key => _}} ->
         socket
@@ -1180,24 +1198,6 @@ defmodule Phoenix.Component do
       %{} ->
         Phoenix.LiveView.Utils.force_assign(socket, key, fun.())
     end
-  end
-
-  def assign_new(%{__changed__: changed} = assigns, key, fun) when is_function(fun, 1) do
-    case assigns do
-      %{^key => _} -> assigns
-      %{} -> Phoenix.LiveView.Utils.force_assign(assigns, changed, key, fun.(assigns))
-    end
-  end
-
-  def assign_new(%{__changed__: changed} = assigns, key, fun) when is_function(fun, 0) do
-    case assigns do
-      %{^key => _} -> assigns
-      %{} -> Phoenix.LiveView.Utils.force_assign(assigns, changed, key, fun.())
-    end
-  end
-
-  def assign_new(assigns, _key, fun) when is_function(fun, 0) or is_function(fun, 1) do
-    raise_bad_socket_or_assign!("assign_new/3", assigns)
   end
 
   defp raise_bad_socket_or_assign!(name, assigns) do
@@ -1242,11 +1242,9 @@ defmodule Phoenix.Component do
       iex> assign(socket, :name, "Elixir")
 
   """
-  def assign(socket_or_assigns, key, value)
-
   def assign(%Socket{} = socket, key, value) do
     validate_assign_key!(key)
-    Phoenix.LiveView.Utils.assign(socket, key, value)
+    do_assign(socket, key, value)
   end
 
   def assign(%{__changed__: changed} = assigns, key, value) do
@@ -1267,6 +1265,10 @@ defmodule Phoenix.Component do
     raise_bad_socket_or_assign!("assign/3", assigns)
   end
 
+  @doc false
+  def do_assign(%Socket{} = socket, key, value) do
+    Phoenix.LiveView.Utils.assign(socket, key, value)
+  end
   @doc """
   Adds key-value pairs to assigns.
 
@@ -1293,9 +1295,9 @@ defmodule Phoenix.Component do
             "Use the appropriate flash functions instead."
   end
 
-  defp validate_assign_key!(:uploads) do
+  defp validate_assign_key!(assign) when assign in @reserved_assigns do
     raise ArgumentError,
-          ":uploads is a reserved assign by LiveView and it cannot be set directly. "
+          ":#{assign} is a reserved assign by LiveView and it cannot be set directly."
   end
 
   defp validate_assign_key!(_key), do: :ok
@@ -1328,7 +1330,7 @@ defmodule Phoenix.Component do
 
   def update(%Socket{assigns: assigns} = socket, key, fun) when is_function(fun, 1) do
     case assigns do
-      %{^key => val} -> assign(socket, key, fun.(val))
+      %{^key => val} -> do_assign(socket, key, fun.(val))
       %{} -> raise KeyError, key: key, term: assigns
     end
   end
