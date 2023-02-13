@@ -2032,6 +2032,14 @@ if Version.match?(System.version(), ">= 1.13.0") do
       """)
     end
 
+    test "test" do
+      assert_formatter_doesnt_change("""
+      <.component>
+        <div />
+      </.component>
+      """)
+    end
+
     # TODO: Remove this `if` after Elixir versions before than 1.14 are no
     # longer supported.
     if function_exported?(EEx, :tokenize, 2) do

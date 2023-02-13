@@ -192,8 +192,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
   end
 
   defp validate_unclosed_tags!(%{tags: [tag | _]} = state, context) do
-    {_type, name, _attrs, meta} = tag
-    message = "end of #{context} reached without closing tag for <#{name}>"
+    {_type, _name, _attrs, meta} = tag
+    message = "end of #{context} reached without closing tag for <#{meta.tag_name}>"
     raise_syntax_error!(message, meta, state)
   end
 
@@ -293,7 +293,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   defp validate_slot!(state, slot_name, meta) do
     message =
-      "invalid slot entry <#{slot_name}>. A slot entry must be a direct child of a component"
+      "invalid slot entry <:#{slot_name}>. A slot entry must be a direct child of a component"
 
     raise_syntax_error!(message, meta, state)
   end
@@ -399,14 +399,20 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Remote function component (self close)
 
   defp handle_token(
-         {:remote_component, tag_name, attrs, %{self_close: true, line: line} = tag_meta},
+         {:remote_component, _name, attrs, %{self_close: true, line: line} = tag_meta},
          state
        ) do
     attrs = remove_phx_no_break(attrs)
-    {mod_ast, fun} = decompose_remote_component_tag!(tag_name, tag_meta, state)
+    {mod_ast, fun} = decompose_remote_component_tag!(tag_meta.tag_name, tag_meta, state)
 
     {assigns, attr_info} =
-      build_self_close_component_assigns(tag_name, attrs, tag_meta.line, state)
+      build_self_close_component_assigns(
+        :remote_component,
+        tag_meta.tag_name,
+        attrs,
+        tag_meta.line,
+        state
+      )
 
     mod = Macro.expand(mod_ast, state.caller)
     store_component_call({mod, fun}, attr_info, [], line, state)
@@ -439,7 +445,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Remote function component (with inner content)
 
   defp handle_token({:remote_component, tag_name, attrs, tag_meta}, state) do
-    mod_fun = decompose_remote_component_tag!(tag_name, tag_meta, state)
+    mod_fun = decompose_remote_component_tag!(tag_meta.tag_name, tag_meta, state)
     tag_meta = Map.put(tag_meta, :mod_fun, mod_fun)
 
     case pop_special_attrs!(attrs, tag_meta, state) do
@@ -471,7 +477,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
     attrs = remove_phx_no_break(attrs)
 
     {assigns, attr_info, slot_info, state} =
-      build_component_assigns(name, attrs, line, tag_meta, state)
+      build_component_assigns(:remote_component, name, attrs, line, tag_meta, state)
 
     store_component_call({mod, fun}, attr_info, slot_info, line, state)
 
@@ -493,13 +499,14 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Slot (self close)
 
-  defp handle_token({:slot, tag_name, attrs, %{self_close: true} = tag_meta}, state) do
-    ":" <> slot_name = tag_name
+  defp handle_token(
+         {:slot, slot_name, attrs, %{self_close: true, tag_name: tag_name} = tag_meta},
+         state
+       ) do
     validate_slot!(state, slot_name, tag_meta)
     attrs = remove_phx_no_break(attrs)
     %{line: line} = tag_meta
-    slot_name = String.to_atom(slot_name)
-    {special, roots, attrs, attr_info} = split_component_attrs(attrs, state, tag_name)
+    {special, roots, attrs, attr_info} = split_component_attrs(:slot, tag_name, attrs, state)
     let = special[":let"]
 
     with {_, let_meta} <- let do
@@ -523,11 +530,12 @@ defmodule Phoenix.LiveView.HTMLEngine do
     |> update_subengine(:handle_begin, [])
   end
 
-  defp handle_token({:close, :slot, ":" <> slot_name = tag_name, _tag_close_meta} = token, state) do
-    {{:slot, _name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
+  defp handle_token({:close, :slot, slot_name, _tag_close_meta} = token, state) do
+    {{:slot, _name, attrs, %{line: line, tag_name: tag_name} = tag_meta}, state} =
+      pop_tag!(state, token)
+
     attrs = remove_phx_no_break(attrs)
-    slot_name = String.to_atom(slot_name)
-    {special, roots, attrs, attr_info} = split_component_attrs(attrs, state, tag_name)
+    {special, roots, attrs, attr_info} = split_component_attrs(:slot, tag_name, attrs, state)
     clauses = build_component_clauses(special[":let"], state)
 
     ast =
@@ -547,19 +555,21 @@ defmodule Phoenix.LiveView.HTMLEngine do
   # Local function component (self close)
 
   defp handle_token(
-         {:local_component, tag_name, attrs, %{self_close: true, line: line} = tag_meta},
+         {:local_component, name, attrs, %{self_close: true, line: line} = tag_meta},
          state
        ) do
     attrs = remove_phx_no_break(attrs)
-    fun = to_function_name(tag_name)
-    {assigns, attr_info} = build_self_close_component_assigns(tag_name, attrs, line, state)
-    mod = actual_component_module(state.caller, fun)
-    store_component_call({mod, fun}, attr_info, [], line, state)
+
+    {assigns, attr_info} =
+      build_self_close_component_assigns(:local_component, tag_meta.tag_name, attrs, line, state)
+
+    mod = actual_component_module(state.caller, name)
+    store_component_call({mod, name}, attr_info, [], line, state)
 
     ast =
       quote line: line do
         Phoenix.LiveView.HTMLEngine.component(
-          &(unquote(Macro.var(fun, __MODULE__)) / 1),
+          &(unquote(Macro.var(name, __MODULE__)) / 1),
           unquote(assigns),
           {__MODULE__, __ENV__.function, __ENV__.file, unquote(line)}
         )
@@ -583,7 +593,7 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   # Local function component (with inner content)
 
-  defp handle_token({:local_component, "." <> _ = name, attrs, tag_meta} = token, state) do
+  defp handle_token({:local_component, name, attrs, tag_meta} = token, state) do
     case pop_special_attrs!(attrs, tag_meta, state) do
       {^tag_meta, _attrs} ->
         state
@@ -605,21 +615,20 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  defp handle_token({:close, :local_component, tag_name, _tag_close_meta} = token, state) do
+  defp handle_token({:close, :local_component, _name, _tag_close_meta} = token, state) do
     {{:local_component, name, attrs, %{line: line} = tag_meta}, state} = pop_tag!(state, token)
     attrs = remove_phx_no_break(attrs)
-    fun = to_function_name(tag_name)
-    mod = actual_component_module(state.caller, fun)
+    mod = actual_component_module(state.caller, name)
 
     {assigns, attr_info, slot_info, state} =
-      build_component_assigns(name, attrs, line, tag_meta, state)
+      build_component_assigns(:local_component, name, attrs, line, tag_meta, state)
 
-    store_component_call({mod, fun}, attr_info, slot_info, line, state)
+    store_component_call({mod, name}, attr_info, slot_info, line, state)
 
     ast =
       quote line: line do
         Phoenix.LiveView.HTMLEngine.component(
-          &(unquote(Macro.var(fun, __MODULE__)) / 1),
+          &(unquote(Macro.var(name, __MODULE__)) / 1),
           unquote(assigns),
           {__MODULE__, __ENV__.function, __ENV__.file, unquote(line)}
         )
@@ -971,14 +980,14 @@ defmodule Phoenix.LiveView.HTMLEngine do
 
   ## build_self_close_component_assigns/build_component_assigns
 
-  defp build_self_close_component_assigns(component, attrs, line, state) do
-    {special, roots, attrs, attr_info} = split_component_attrs(attrs, state, component)
+  defp build_self_close_component_assigns(type, component, attrs, line, state) do
+    {special, roots, attrs, attr_info} = split_component_attrs(type, component, attrs, state)
     raise_if_let!(special[":let"], state.file)
     {merge_component_attrs(roots, attrs, line), attr_info}
   end
 
-  defp build_component_assigns(component, attrs, line, tag_meta, state) do
-    {special, roots, attrs, attr_info} = split_component_attrs(attrs, state, component)
+  defp build_component_assigns(type, component, attrs, line, tag_meta, state) do
+    {special, roots, attrs, attr_info} = split_component_attrs(type, component, attrs, state)
     clauses = build_component_clauses(special[":let"], state)
 
     inner_block =
@@ -1005,11 +1014,14 @@ defmodule Phoenix.LiveView.HTMLEngine do
     {merge_component_attrs(roots, attrs, line), attr_info, slot_info, state}
   end
 
-  defp split_component_attrs(attrs, state, component_or_slot) do
+  defp split_component_attrs(type, component_or_slot, attrs, state) do
     {special, roots, attrs, locs} =
       attrs
       |> Enum.reverse()
-      |> Enum.reduce({%{}, [], [], []}, &split_component_attr(&1, &2, state, component_or_slot))
+      |> Enum.reduce(
+        {%{}, [], [], []},
+        &split_component_attr(&1, &2, state, component_or_slot, type)
+      )
 
     {special, roots, attrs, {roots != [], attrs, locs}}
   end
@@ -1018,7 +1030,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
          {:root, {:expr, value, %{line: line, column: col}}, _attr_meta},
          {special, r, a, locs},
          state,
-         _component_or_slot
+         _component_or_slot,
+         _type
        ) do
     quoted_value = Code.string_to_quoted!(value, line: line, column: col, file: state.file)
     quoted_value = quote line: line, do: Map.new(unquote(quoted_value))
@@ -1031,7 +1044,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
          {attr, {:expr, value, %{line: line, column: col} = meta}, attr_meta},
          {special, r, a, locs},
          state,
-         _component_or_slot
+         _component_or_slot,
+         _type
        )
        when attr in @special_attrs do
     attr =
@@ -1062,22 +1076,22 @@ defmodule Phoenix.LiveView.HTMLEngine do
     end
   end
 
-  defp split_component_attr({attr, _, meta}, _state, state, component_or_slot)
+  defp split_component_attr({attr, _, meta}, _state, state, component_or_slot, type)
        when attr in @special_attrs do
-    context = if String.starts_with?(component_or_slot, ":"), do: "slot", else: "component"
-    message = "#{attr} must be a pattern between {...} in #{context} #{component_or_slot}"
+    message = "#{attr} must be a pattern between {...} in #{type} #{component_or_slot}"
     raise_syntax_error!(message, meta, state)
   end
 
-  defp split_component_attr({":" <> _ = name, _, meta}, _state, state, component_or_slot) do
-    raise_invalid_attr(name, meta, state, component_or_slot)
+  defp split_component_attr({":" <> _ = name, _, meta}, _state, state, component_or_slot, type) do
+    raise_invalid_attr(name, meta, state, component_or_slot, type)
   end
 
   defp split_component_attr(
          {name, {:expr, value, %{line: line, column: col}}, attr_meta},
          {special, r, a, locs},
          state,
-         _component_or_slot
+         _component_or_slot,
+         _type
        ) do
     quoted_value = Code.string_to_quoted!(value, line: line, column: col, file: state.file)
     {special, r, [{String.to_atom(name), quoted_value} | a], [line_column(attr_meta) | locs]}
@@ -1087,7 +1101,8 @@ defmodule Phoenix.LiveView.HTMLEngine do
          {name, {:string, value, _meta}, attr_meta},
          {special, r, a, locs},
          _state,
-         _component_or_slot
+         _component_or_slot,
+         _type
        ) do
     {special, r, [{String.to_atom(name), value} | a], [line_column(attr_meta) | locs]}
   end
@@ -1096,14 +1111,14 @@ defmodule Phoenix.LiveView.HTMLEngine do
          {name, nil, attr_meta},
          {special, r, a, locs},
          _state,
-         _component_or_slot
+         _component_or_slot,
+         _type
        ) do
     {special, r, [{String.to_atom(name), true} | a], [line_column(attr_meta) | locs]}
   end
 
-  defp raise_invalid_attr(name, meta, state, component_or_slot) do
-    context = if String.starts_with?(component_or_slot, ":"), do: "slot", else: "component"
-    message = "unsupported attribute #{inspect(name)} in #{context} #{component_or_slot}"
+  defp raise_invalid_attr(name, meta, state, component_or_slot, type) do
+    message = "unsupported attribute #{inspect(name)} in #{type} #{component_or_slot}"
     raise_syntax_error!(message, meta, state)
   end
 
@@ -1370,6 +1385,4 @@ defmodule Phoenix.LiveView.HTMLEngine do
       file: state.file,
       description: message <> ParseError.code_snippet(state.source, meta, state.indentation)
   end
-
-  defp to_function_name("." <> name), do: String.to_atom(name)
 end

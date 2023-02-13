@@ -259,15 +259,15 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   defp handle_tag_open(text, line, column, acc, state) do
     case handle_tag_name(text, column, []) do
       {:ok, name, new_column, rest} ->
-        meta = %{line: line, column: column - 1, inner_location: nil}
+        meta = %{line: line, column: column - 1, inner_location: nil, tag_name: name}
 
         case classify_tag_type(name) do
-          {:ok, type} ->
-            acc = [{type, name, [], meta} | acc]
-            handle_maybe_tag_open_end(rest, line, new_column, acc, state)
-
           {:error, message} ->
             raise_syntax_error!(message, meta, state)
+
+          {type, name} ->
+            acc = [{type, name, [], meta} | acc]
+            handle_maybe_tag_open_end(rest, line, new_column, acc, state)
         end
 
       :error ->
@@ -285,15 +285,20 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
   defp handle_tag_close(text, line, column, acc, state) do
     case handle_tag_name(text, column, []) do
       {:ok, name, new_column, ">" <> rest} ->
-        meta = %{line: line, column: column - 2, inner_location: {line, column - 2}}
+        meta = %{
+          line: line,
+          column: column - 2,
+          inner_location: {line, column - 2},
+          tag_name: name
+        }
 
         case classify_tag_type(name) do
-          {:ok, type} ->
-            acc = [{:close, type, name, meta} | acc]
-            handle_text(rest, line, new_column + 1, [], acc, state)
-
           {:error, message} ->
             raise_syntax_error!(message, meta, state)
+
+          {type, name} ->
+            acc = [{:close, type, name, meta} | acc]
+            handle_text(rest, line, new_column + 1, [], acc, state)
         end
 
       {:ok, _, new_column, _} ->
@@ -308,11 +313,16 @@ defmodule Phoenix.LiveView.HTMLTokenizer do
     end
   end
 
-  defp classify_tag_type(":" <> _name), do: {:ok, :slot}
+  defp classify_tag_type(":" <> name), do: {:slot, String.to_atom(name)}
   defp classify_tag_type(":inner_block"), do: {:error, "the slot name :inner_block is reserved"}
-  defp classify_tag_type(<<first, _::binary>>) when first in ?A..?Z, do: {:ok, :remote_component}
-  defp classify_tag_type("." <> _name), do: {:ok, :local_component}
-  defp classify_tag_type(_name), do: {:ok, :tag}
+
+  defp classify_tag_type(<<first, _::binary>> = name) when first in ?A..?Z,
+    do: {:remote_component, String.to_atom(name)}
+
+  defp classify_tag_type("." <> name),
+    do: {:local_component, String.to_atom(name)}
+
+  defp classify_tag_type(name), do: {:tag, name}
 
   ## handle_tag_name
 
